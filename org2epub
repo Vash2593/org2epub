@@ -1,0 +1,118 @@
+#!/bin/sh
+
+set -e
+
+usage() {
+    cat <<.
+usage: $0 [opts] filenames...
+
+Convert a list of org-file or html-file to an epub.
+
+Options:
+  -h, --help      Display this help and exit.
+.
+
+    exit $1
+}
+
+work() {
+    local org_file="$1"
+    local local_org_file="$tmp/`basename \"$org_file\"`"
+    local html_file="`echo \"$local_org_file\" | sed -e 's|.org$|.html|'`"
+    local tmp="`mktemp -d /tmp/org2epub.XXXX`"
+    local xhtml_file="./`echo \"$local_org_file\" | sed -e 's|.html$|.xhtml|'`"
+    local file="`echo \"$html_file\" | sed -e 's|.xhtml$||'`"
+    local epub_file="`echo \"$local_org_file\" | sed -e s'|.org$|.epub|'`"
+    local work_title="$title"
+    local work_author="$author"
+
+    # Retrieve the org file to the working directory
+    cp -- "$org_file" "$tmp/$local_org_file"
+
+    # Go to the working directory
+    cd -- "$tmp"
+
+
+    { # Compute author and title
+        if [ "x$work_title" = x ]; then
+            work_title="`sed -re '/#\+TITLE:/!d' -e 's/\#\+TITLE: *//g'  \"$tmp/$local_org_file\"`"
+        fi
+
+        if [ "x$work_author" = x ]; then
+            work_author="`sed -re '/#\+AUTHOR:/!d' -e 's/\#\+AUTHOR: *//g'  \"$tmp/$local_org_file\"`"
+        fi
+    }
+
+
+    # Create the working directory
+    mkdir META-INF
+
+    if echo "$org_file" | egrep '.org$' >/dev/null; then
+        # Generate the org file as html
+        emacs --batch --visit "$org_file" --funcall org-export-as-html >/dev/null 2>&1
+    fi
+    mv -- "$tmp/$html_file" "$xhtml_file"
+
+
+    { # Create META-INF/container.xml
+        cat >"META-INF/container.xml"<<.
+<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+   <rootfiles>
+      <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
+   </rootfiles>
+</container>
+.
+    }
+
+    { # Create content.opf
+        cat >content.opf<<.
+<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uuid_id">
+  <metadata xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:calibre="http://calibre.kovidgoyal.net/2009/metadata" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <meta name="calibre:rating" content="0.00"/>
+    <meta name="calibre:series_index" content="1"/>
+    <dc:language>US</dc:language>
+    <dc:creator opf:file-as="$work_author" opf:role="aut">$work_author</dc:creator>
+    <meta name="calibre:timestamp" content="2010-06-03T17:06:24.338000+00:00"/>
+    <dc:title>$work_title</dc:title>
+    <meta name="cover" content="cover"/>
+    <dc:date>2010-06-03T04:00:00+00:00</dc:date>
+    <dc:identifier id="uuid_id" opf:scheme="uuid">23c10668-77dc-4c01-ad5b-fc77462db1f9</dc:identifier>
+  </metadata>
+  <manifest>
+    <item href="$xhtml_file" id="$file" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="$file" />
+  </spine>
+</package>
+.
+    }
+
+    { # Create mimetype
+        cat >mimetype<<.
+application/epub+zip
+.
+    }
+
+    zip -r "$tmp/$epub_file" META-INF mimetype content.opf "$xhtml_file" >/dev/null
+
+    cd ->/dev/null
+    mv "$tmp/$epub_file" "`dirname \"$org_file\"`/"
+
+    rm -rf "$tmp"
+
+}
+
+for opt
+do
+    case $opt in
+        (-h|--help)
+            usage 0
+            ;;
+        (*)
+            work "$opt"
+            ;;
+    esac
+done
